@@ -80,7 +80,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.update_elapsed(time_position)
 
     def stream_title_changed(self, title):
-        self.display.update(title=title)
+        # Intentionally ignore stream title updates so no title is shown on display.
+        self.display.update(title="")
 
     def track_playback_ended(self, tl_track, time_position):
         self.update_elapsed(time_position)
@@ -109,8 +110,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         album = ""
         artist = ""
 
-        if track.name is not None:
-            title = track.name
+        # Keep title blank to prevent showing track title on screen.
+        title = ""
 
         if track.album is not None and track.album.name is not None:
             album = track.album.name
