@@ -15,18 +15,21 @@ class Extension(ext.Extension):
     dist_name = "Mopidy-PiDiV2"
     ext_name = "pidiv2"
     version = __version__
+    display_entry_point_groups = ("pidiv2.plugin.display", "pidi.plugin.display")
 
     @classmethod
-    def get_display_types(self):
+    def get_display_types(cls):
         display_types = {}
-        for entry_point in pkg_resources.iter_entry_points("pidiv2.plugin.display"):
-            try:
-                plugin = entry_point.load()
-                display_types[plugin.option_name] = plugin
-            except (ImportError) as err:
-                logger.log(
-                    logging.WARN, f"Error loading display plugin {entry_point}: {err}"
-                )
+        for group in cls.display_entry_point_groups:
+            for entry_point in pkg_resources.iter_entry_points(group):
+                try:
+                    plugin = entry_point.load()
+                    display_types[plugin.option_name] = plugin
+                except (ImportError) as err:
+                    logger.log(
+                        logging.WARN,
+                        f"Error loading display plugin {entry_point}: {err}",
+                    )
 
         return display_types
 
