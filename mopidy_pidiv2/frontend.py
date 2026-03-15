@@ -219,7 +219,12 @@ class PiDiV2:
             self._last_art = art
 
     def update_album_art(self, art=None):
-        _album = self.title if self.album is None or self.album == "" else self.album
+        # When album is unknown, use the track title stripped of any file extension
+        # so MusicBrainz searches get "Monkey Puzzle" not "Monkey Puzzle.mp3"
+        if self.album:
+            _album = self.album
+        else:
+            _album = os.path.splitext(self.title)[0] if self.title else ""
 
         if art is not None:
             logger.warning(f"mopidy-pidiv2: update_album_art called with uri scheme '{art.split(':')[0]}:'")
@@ -273,8 +278,11 @@ class PiDiV2:
             else:
                 logger.error(f"mopidy-pidiv2: unrecognised art URI scheme, skipping: {art[:80]}")
 
-        logger.warning(f"mopidy-pidiv2: falling back to MusicBrainz for '{self.artist} - {_album}'")
-        art = self._brainz.get_album_art(self.artist, _album, self._handle_album_art)
+        if self.artist or _album:
+            logger.warning(f"mopidy-pidiv2: falling back to MusicBrainz for '{self.artist} - {_album}'")
+            art = self._brainz.get_album_art(self.artist, _album, self._handle_album_art)
+        else:
+            logger.warning("mopidy-pidiv2: skipping MusicBrainz lookup — no artist or album available")
 
     def update(self, **kwargs):
         if "state" in kwargs or "volume" in kwargs:
