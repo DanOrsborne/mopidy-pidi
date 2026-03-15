@@ -56,7 +56,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
                             break
                 if hostname is not None:
                     self.display.update(
-                        title=f"Visit http://{hostname}:{port} "
+                        title=f"[PIDIV2] Visit http://{hostname}:{port}"
                     )
                     self.display.update_album_art(art="")
 
