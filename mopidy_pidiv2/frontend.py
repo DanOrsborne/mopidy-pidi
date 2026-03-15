@@ -130,17 +130,24 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
 
         art = None
         track_images = self.core.library.get_images([track.uri]).get()
-        logger.warn(f"Got track images for {track.uri}: {track_images}")
+        logger.debug(f"Got track images for {track.uri}: {track_images}")
         if track.uri in track_images:
-            track_images = track_images[track.uri]
-            if len(track_images) == 1:
-                art = track_images[0].uri
-            else:
-                for image in track_images:
-                    if image.width is None or image.height is None:
-                        continue
-                    if image.height >= 240 and image.width >= 240:
-                        art = image.uri
+            images = track_images[track.uri]
+            # Prefer embedded art (data: URIs from MP3/FLAC tags) — no dimensions available
+            for image in images:
+                if image.uri.startswith("data:"):
+                    art = image.uri
+                    break
+            if art is None:
+                # Fall back to a remote image that meets the minimum display size
+                for image in images:
+                    if image.width is not None and image.height is not None:
+                        if image.height >= 240 and image.width >= 240:
+                            art = image.uri
+                            break
+            if art is None and images:
+                # Last resort: use whatever is available
+                art = images[0].uri
 
         self.display.update_album_art(art=art)
 
@@ -215,27 +222,25 @@ class PiDiV2:
                 return
 
             elif art.startswith("file://"):
-                # Local file URI from e.g. mopidy-local
+                # Local file URI from mopidy-local
                 file_path = unquote(art[7:])
                 if os.path.isfile(file_path):
                     self._handle_album_art(file_path)
                     return
 
             elif art.startswith("data:"):
-                # Embedded cover art as a data URI (e.g. MP3 ID3 tag via mopidy-local)
+                # Embedded cover art from MP3/FLAC ID3 tags via mopidy-local
                 cache_key = hashlib.md5(art.encode("utf-8")).hexdigest()
                 file_name = os.path.join(self.cache_dir, f"{cache_key}.jpg")
-                if os.path.isfile(file_name):
-                    self._handle_album_art(file_name)
-                    return
-                try:
-                    _, encoded = art.split(",", 1)
-                    image_data = base64.b64decode(encoded)
-                    self._brainz.save_album_art(image_data, file_name)
-                    self._handle_album_art(file_name)
-                    return
-                except Exception as e:
-                    logger.warning(f"mopidy-pidiv2: failed to decode embedded cover art: {e}")
+                if not os.path.isfile(file_name):
+                    try:
+                        _, encoded = art.split(",", 1)
+                        self._brainz.save_album_art(base64.b64decode(encoded), file_name)
+                    except Exception as e:
+                        logger.warning(f"mopidy-pidiv2: failed to decode embedded cover art: {e}")
+                        return
+                self._handle_album_art(file_name)
+                return
 
             elif art.startswith("http://") or art.startswith("https://"):
                 file_name = self._brainz.get_cache_file_name(art)
