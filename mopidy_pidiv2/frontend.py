@@ -36,7 +36,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
 
     def on_start(self):
 
-        logger.warn("this is mycode")
+        
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
@@ -57,6 +57,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
                         if hostname is not None:
                             break
                 if hostname is not None:
+
+                    logger.warn("this is mycode 2")
                     self.display.update(
                         title=f"Visit http://{hostname}:{port} [PIDIV2]"
                     )
