@@ -1,7 +1,10 @@
+import base64
+import hashlib
 import logging
 import os
 import threading
 import time
+from urllib.parse import unquote
 
 import pykka
 import requests
@@ -210,6 +213,29 @@ class PiDiV2:
                 # Art is already a locally cached file we can use
                 self._handle_album_art(art)
                 return
+
+            elif art.startswith("file://"):
+                # Local file URI from e.g. mopidy-local
+                file_path = unquote(art[7:])
+                if os.path.isfile(file_path):
+                    self._handle_album_art(file_path)
+                    return
+
+            elif art.startswith("data:"):
+                # Embedded cover art as a data URI (e.g. MP3 ID3 tag via mopidy-local)
+                cache_key = hashlib.md5(art.encode("utf-8")).hexdigest()
+                file_name = os.path.join(self.cache_dir, f"{cache_key}.jpg")
+                if os.path.isfile(file_name):
+                    self._handle_album_art(file_name)
+                    return
+                try:
+                    _, encoded = art.split(",", 1)
+                    image_data = base64.b64decode(encoded)
+                    self._brainz.save_album_art(image_data, file_name)
+                    self._handle_album_art(file_name)
+                    return
+                except Exception as e:
+                    logger.warning(f"mopidy-pidiv2: failed to decode embedded cover art: {e}")
 
             elif art.startswith("http://") or art.startswith("https://"):
                 file_name = self._brainz.get_cache_file_name(art)
