@@ -9,7 +9,7 @@ def test_get_default_config():
 
     config = ext.get_default_config()
 
-    assert "[pidi_dan]" in config
+    assert "[pidi]" in config
     assert "enabled = true" in config
 
 
