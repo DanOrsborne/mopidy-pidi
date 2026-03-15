@@ -44,7 +44,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
-        self.display.update_album_art(art="")
+        self.display.update_album_art(art=None)
         
                     
 
@@ -135,11 +135,13 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display.update_album_art(art=art)
 
     def _extract_embedded_apic_data_uri(self, track_uri):
-        parsed = urlparse(track_uri)
-        if parsed.scheme != "file":
+        file_path = self._resolve_track_file_path(track_uri)
+        if file_path is None:
+            logger.warning(
+                f"mopidy-pidiv2: cannot resolve playable file path from URI: {track_uri}"
+            )
             return None
 
-        file_path = unquote(parsed.path)
         if not os.path.isfile(file_path):
             logger.error(
                 f"mopidy-pidiv2: cannot read local track file for APIC extraction: {file_path}"
@@ -172,6 +174,24 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
                 f"mopidy-pidiv2: mutagen APIC extraction failed for {file_path}: {e}"
             )
             return None
+
+    def _resolve_track_file_path(self, track_uri):
+        parsed = urlparse(track_uri)
+
+        if parsed.scheme == "file":
+            return unquote(parsed.path)
+
+        if track_uri.startswith("local:track:"):
+            relative_path = unquote(track_uri[len("local:track:") :])
+            media_dir = self.config.get("local", {}).get("media_dir")
+            if media_dir:
+                return os.path.join(media_dir, relative_path)
+            logger.error(
+                "mopidy-pidiv2: local:track URI received but local.media_dir is not configured"
+            )
+            return None
+
+        return None
 
     def tracklist_changed(self):
         pass
@@ -235,6 +255,10 @@ class PiDiV2:
             self._last_art = art
 
     def update_album_art(self, art=None):
+        if not art:
+            logger.warning("mopidy-pidiv2: no artwork URI supplied for this track")
+            return
+
         if art is not None:
             logger.warning(f"mopidy-pidiv2: update_album_art called with uri scheme '{art.split(':')[0]}:'")
             if art.startswith("data:"):
@@ -257,8 +281,6 @@ class PiDiV2:
                 return
             else:
                 logger.error("mopidy-pidiv2: non-embedded artwork blocked (only data: URIs are allowed)")
-        else:
-            logger.warning("mopidy-pidiv2: no artwork URI supplied for this track")
 
     def update(self, **kwargs):
         if "state" in kwargs or "volume" in kwargs:
