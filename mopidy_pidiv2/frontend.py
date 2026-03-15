@@ -4,9 +4,12 @@ import logging
 import os
 import threading
 import time
+from urllib.parse import unquote, urlparse
 
 import pykka
 from mopidy import core
+from mutagen.id3 import ID3
+from mutagen.id3._util import ID3NoHeaderError
 
 import netifaces
 
@@ -126,24 +129,49 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
 
             self.display.update(elapsed=float(time_position), length=float(length))
 
-        art = None
-        track_images = self.core.library.get_images([track.uri]).get()
-        logger.warning(f"mopidy-pidiv2: got {len(track_images)} image entries for {track.uri}")
-        if track.uri in track_images:
-            images = track_images[track.uri]
-            logger.warning(f"mopidy-pidiv2: {len(images)} image(s) available for track")
-            # Embedded-art only: use data: URIs from MP3/FLAC tags.
-            for image in images:
-                if image.uri.startswith("data:"):
-                    art = image.uri
-                    logger.warning("mopidy-pidiv2: using embedded data: URI cover art")
-                    break
-            if art is None:
-                logger.warning("mopidy-pidiv2: no embedded data: URI artwork found for track")
-        else:
-            logger.warning(f"mopidy-pidiv2: no images returned for {track.uri}")
+        # APIC-only mode: always extract embedded album art directly from track file metadata.
+        art = self._extract_embedded_apic_data_uri(track.uri)
 
         self.display.update_album_art(art=art)
+
+    def _extract_embedded_apic_data_uri(self, track_uri):
+        parsed = urlparse(track_uri)
+        if parsed.scheme != "file":
+            return None
+
+        file_path = unquote(parsed.path)
+        if not os.path.isfile(file_path):
+            logger.error(
+                f"mopidy-pidiv2: cannot read local track file for APIC extraction: {file_path}"
+            )
+            return None
+
+        try:
+            tags = ID3(file_path)
+            apic_frames = tags.getall("APIC")
+            if not apic_frames:
+                logger.warning(
+                    f"mopidy-pidiv2: no APIC frames in MP3 metadata for {file_path}"
+                )
+                return None
+
+            apic = apic_frames[0]
+            mime = apic.mime or "image/jpeg"
+            encoded = base64.b64encode(apic.data).decode("ascii")
+            logger.warning(
+                f"mopidy-pidiv2: extracted APIC embedded art via mutagen from {file_path}"
+            )
+            return f"data:{mime};base64,{encoded}"
+        except ID3NoHeaderError:
+            logger.warning(
+                f"mopidy-pidiv2: no ID3 header available for APIC extraction in {file_path}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"mopidy-pidiv2: mutagen APIC extraction failed for {file_path}: {e}"
+            )
+            return None
 
     def tracklist_changed(self):
         pass
