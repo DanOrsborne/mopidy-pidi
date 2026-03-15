@@ -12,14 +12,14 @@ logger = logging.getLogger(__name__)
 
 class Extension(ext.Extension):
 
-    dist_name = "Mopidy-PiDiV2"
+    dist_name = "Mopidy-PiDi"
     ext_name = "pidiv2"
     version = __version__
 
     @classmethod
     def get_display_types(self):
         display_types = {}
-        for entry_point in pkg_resources.iter_entry_points("pidi.plugin.display"):
+        for entry_point in pkg_resources.iter_entry_points("pidiv2.plugin.display"):
             try:
                 plugin = entry_point.load()
                 display_types[plugin.option_name] = plugin
