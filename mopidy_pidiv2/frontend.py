@@ -4,10 +4,8 @@ import logging
 import os
 import threading
 import time
-from urllib.parse import unquote
 
 import pykka
-import requests
 from mopidy import core
 
 import netifaces
@@ -134,26 +132,16 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         if track.uri in track_images:
             images = track_images[track.uri]
             logger.warning(f"mopidy-pidiv2: {len(images)} image(s) available for track")
-            # Prefer embedded art (data: URIs from MP3/FLAC tags) — no dimensions available
+            # Embedded-art only: use data: URIs from MP3/FLAC tags.
             for image in images:
                 if image.uri.startswith("data:"):
                     art = image.uri
                     logger.warning("mopidy-pidiv2: using embedded data: URI cover art")
                     break
             if art is None:
-                # Fall back to a remote image that meets the minimum display size
-                for image in images:
-                    if image.width is not None and image.height is not None:
-                        if image.height >= 240 and image.width >= 240:
-                            art = image.uri
-                            logger.warning(f"mopidy-pidiv2: using sized remote image {image.width}x{image.height}: {art}")
-                            break
-            if art is None and images:
-                # Last resort: use whatever is available
-                art = images[0].uri
-                logger.warning(f"mopidy-pidiv2: using first available image as fallback: {art[:80]}")
+                logger.warning("mopidy-pidiv2: no embedded data: URI artwork found for track")
         else:
-            logger.warning(f"mopidy-pidiv2: no images returned for {track.uri}, falling back to MusicBrainz")
+            logger.warning(f"mopidy-pidiv2: no images returned for {track.uri}")
 
         self.display.update_album_art(art=art)
 
@@ -219,13 +207,6 @@ class PiDiV2:
             self._last_art = art
 
     def update_album_art(self, art=None):
-        # When album is unknown, use the track title stripped of any file extension
-        # so MusicBrainz searches get "Monkey Puzzle" not "Monkey Puzzle.mp3"
-        if self.album:
-            _album = self.album
-        else:
-            _album = os.path.splitext(self.title)[0] if self.title else ""
-
         if art is not None:
             logger.warning(f"mopidy-pidiv2: update_album_art called with uri scheme '{art.split(':')[0]}:'")
             if art.startswith("data:"):
@@ -246,43 +227,10 @@ class PiDiV2:
                     logger.warning(f"mopidy-pidiv2: embedded cover art cache hit: {file_name}")
                 self._handle_album_art(file_name)
                 return
-
-            elif art.startswith("file://"):
-                # Local file URI from mopidy-local
-                file_path = unquote(art[7:])
-                if os.path.isfile(file_path):
-                    logger.warning(f"mopidy-pidiv2: using local file URI: {file_path}")
-                    self._handle_album_art(file_path)
-                    return
-                else:
-                    logger.error(f"mopidy-pidiv2: local file URI not found on disk: {file_path}")
-
-            elif art.startswith("http://") or art.startswith("https://"):
-                file_name = self._brainz.get_cache_file_name(art)
-
-                if os.path.isfile(file_name):
-                    logger.warning(f"mopidy-pidiv2: remote art cache hit: {file_name}")
-                    self._handle_album_art(file_name)
-                    return
-
-                else:
-                    logger.warning(f"mopidy-pidiv2: downloading remote art: {art}")
-                    response = requests.get(art)
-                    if response.status_code == 200:
-                        self._brainz.save_album_art(response.content, file_name)
-                        self._handle_album_art(file_name)
-                        return
-                    else:
-                        logger.error(f"mopidy-pidiv2: remote art download failed with HTTP {response.status_code}: {art}")
-
             else:
-                logger.error(f"mopidy-pidiv2: unrecognised art URI scheme, skipping: {art[:80]}")
-
-        if self.artist or _album:
-            logger.warning(f"mopidy-pidiv2: falling back to MusicBrainz for '{self.artist} - {_album}'")
-            art = self._brainz.get_album_art(self.artist, _album, self._handle_album_art)
+                logger.error("mopidy-pidiv2: non-embedded artwork blocked (only data: URIs are allowed)")
         else:
-            logger.warning("mopidy-pidiv2: skipping MusicBrainz lookup — no artist or album available")
+            logger.warning("mopidy-pidiv2: no artwork URI supplied for this track")
 
     def update(self, **kwargs):
         if "state" in kwargs or "volume" in kwargs:
