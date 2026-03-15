@@ -127,7 +127,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
 
         art = None
         track_images = self.core.library.get_images([track.uri]).get()
-        logger.debug(f"Got track images for {track.uri}: {track_images}")
+        logger.warn(f"Got track images for {track.uri}: {track_images}")
         if track.uri in track_images:
             track_images = track_images[track.uri]
             if len(track_images) == 1:
