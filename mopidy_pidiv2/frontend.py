@@ -40,29 +40,9 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
-        if "http" in self.config:
-            ifaces = netifaces.interfaces()
-            ifaces.remove("lo")
-
-            http = self.config["http"]
-            if http.get("enabled", False):
-                hostname = http.get("hostname", "127.0.0.1")
-                port = http.get("port", 6680)
-                if hostname in ["::", "0.0.0.0"]:
-                    family = (
-                        netifaces.AF_INET6 if hostname == "::" else netifaces.AF_INET
-                    )
-                    for iface in ifaces:
-                        hostname = self.get_ifaddress(iface, family)
-                        if hostname is not None:
-                            break
-                if hostname is not None:
-
-                    logger.warn("this is mycode 2")
-                    self.display.update(
-                        title=f"Visit http://{hostname}:{port} [PIDIV2]"
-                    )
-                    self.display.update_album_art(art="")
+        self.display.update_album_art(art="")
+        
+                    
 
     def on_stop(self):
         self.display.stop()
