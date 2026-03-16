@@ -42,7 +42,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
-
+        art = self._extract_embedded_apic_data_uri("file:///home/pi/Music/0b411f22-8697-413d-9114-7cf33183ae2a.mp3")
+        self.display.update_album_art(art=art)
                
 
     def on_stop(self):
