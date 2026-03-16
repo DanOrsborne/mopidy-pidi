@@ -37,6 +37,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.core = core
         self.config = config
         self.current_track = None
+        
 
     def on_start(self):
         self.display = PiDiV2(self.config)
