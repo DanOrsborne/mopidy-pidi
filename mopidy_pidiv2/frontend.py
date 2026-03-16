@@ -44,7 +44,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
-        self.display.update_album_art(art=self._brainz.get_default_art())
+        art = self._brainz.get_default_art()
+        self.display.update_album_art(art=art)
         
                     
 
