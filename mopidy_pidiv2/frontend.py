@@ -44,7 +44,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self.display = PiDiV2(self.config)
         self.display.start()
         self.display.update(volume=self.core.mixer.get_volume().get())
-        self.display.update_album_art(art=self._placeholder_album_art_data_uri())
+        self.display.update_album_art(art=None)
         
                     
 
@@ -193,23 +193,6 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             return None
 
         return None
-
-    def _placeholder_album_art_data_uri(self):
-        placeholder_path = os.path.join(
-            os.path.dirname(__file__), "placeholder_album_art.b64"
-        )
-        try:
-            with open(placeholder_path, "r", encoding="ascii") as file_handle:
-                encoded = file_handle.read().strip()
-            if not encoded:
-                logger.error("mopidy-pidiv2: placeholder image base64 file is empty")
-                return None
-            return f"data:image/png;base64,{encoded}"
-        except Exception as error:
-            logger.error(
-                f"mopidy-pidiv2: failed to load placeholder image data: {error}"
-            )
-            return None
 
     def tracklist_changed(self):
         pass
