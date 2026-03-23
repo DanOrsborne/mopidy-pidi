@@ -104,6 +104,21 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             self._gpio_buttons.append(btn)
             logger.info(f"mopidy-pidiv2: next button on GPIO {next_pin} (hold {hold_time}s to shutdown)")
 
+        volume_down_pin = cfg.get("button_volume_down_pin", 0)
+        volume_up_pin = cfg.get("button_volume_up_pin", 0)
+
+        if volume_down_pin:
+            btn = GPIOButton(volume_down_pin)
+            btn.when_pressed = self._on_button_volume_down
+            self._gpio_buttons.append(btn)
+            logger.info(f"mopidy-pidiv2: volume down button on GPIO {volume_down_pin}")
+
+        if volume_up_pin:
+            btn = GPIOButton(volume_up_pin)
+            btn.when_pressed = self._on_button_volume_up
+            self._gpio_buttons.append(btn)
+            logger.info(f"mopidy-pidiv2: volume up button on GPIO {volume_up_pin}")
+
     def _stop_buttons(self):
         for btn in self._gpio_buttons:
             btn.close()
@@ -128,6 +143,22 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         logger.warning("mopidy-pidiv2: shutdown hold detected — halting system")
         import subprocess
         subprocess.run(["sudo", "shutdown", "-h", "now"])
+
+    def _on_button_volume_down(self):
+        try:
+            current = self.core.mixer.get_volume().get(timeout=2)
+            if current is not None:
+                self.core.mixer.set_volume(max(0, current - 5))
+        except Exception as error:
+            logger.error(f"mopidy-pidiv2: volume down button error: {error}")
+
+    def _on_button_volume_up(self):
+        try:
+            current = self.core.mixer.get_volume().get(timeout=2)
+            if current is not None:
+                self.core.mixer.set_volume(min(100, current + 5))
+        except Exception as error:
+            logger.error(f"mopidy-pidiv2: volume up button error: {error}")
 
     def _on_button_next(self):
         try:
