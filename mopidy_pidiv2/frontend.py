@@ -97,10 +97,12 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             )
 
         if next_pin:
-            btn = GPIOButton(next_pin)
+            hold_time = cfg.get("shutdown_hold_time", 10)
+            btn = GPIOButton(next_pin, hold_time=hold_time)
             btn.when_pressed = self._on_button_next
+            btn.when_held = self._on_button_shutdown
             self._gpio_buttons.append(btn)
-            logger.info(f"mopidy-pidiv2: next button on GPIO {next_pin}")
+            logger.info(f"mopidy-pidiv2: next button on GPIO {next_pin} (hold {hold_time}s to shutdown)")
 
     def _stop_buttons(self):
         for btn in self._gpio_buttons:
@@ -116,6 +118,11 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
                 self.core.playback.play()
         except Exception as error:
             logger.error(f"mopidy-pidiv2: play/pause button error: {error}")
+
+    def _on_button_shutdown(self):
+        logger.warning("mopidy-pidiv2: shutdown hold detected — halting system")
+        import subprocess
+        subprocess.run(["sudo", "shutdown", "-h", "now"])
 
     def _on_button_next(self):
         try:
