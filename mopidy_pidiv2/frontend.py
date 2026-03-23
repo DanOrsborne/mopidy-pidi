@@ -2,6 +2,7 @@ import base64
 import hashlib
 import logging
 import os
+from pathlib import Path
 import threading
 import time
 from urllib.parse import quote, unquote, urlparse
@@ -166,7 +167,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             logger.warning(f"mopidy-pidiv2: RFID card detected: {uid_str}")
             self._play_rfid_uid(uid_str)
 
-    def _build_rfid_track_uri(self, uid_str):
+    def _find_rfid_track_path(self, uid_str):
         media_dir = self.config.get("local", {}).get("media_dir")
         if not media_dir:
             logger.error(
@@ -175,33 +176,64 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             return None
 
         file_name = f"{uid_str}.mp3"
-        file_path = os.path.join(media_dir, file_name)
-        if not os.path.isfile(file_path):
-            logger.warning(
-                f"mopidy-pidiv2: no RFID track found for card {uid_str} at {file_path}"
-            )
-            return None
+        direct_path = os.path.join(media_dir, file_name)
+        if os.path.isfile(direct_path):
+            return direct_path
 
-        return f"local:track:{quote(file_name)}"
+        for root, _, files in os.walk(media_dir):
+            if file_name in files:
+                return os.path.join(root, file_name)
+
+        logger.warning(
+            f"mopidy-pidiv2: no RFID track found for card {uid_str} under {media_dir}"
+        )
+        return None
+
+    def _build_rfid_track_uris(self, uid_str):
+        media_dir = self.config.get("local", {}).get("media_dir")
+        file_path = self._find_rfid_track_path(uid_str)
+        if file_path is None:
+            return []
+
+        uris = []
+
+        if media_dir:
+            relative_path = os.path.relpath(file_path, media_dir).replace(os.sep, "/")
+            uris.append(f"local:track:{quote(relative_path)}")
+
+        uris.append(Path(file_path).resolve().as_uri())
+
+        return uris
 
     def _play_rfid_uid(self, uid_str):
-        track_uri = self._build_rfid_track_uri(uid_str)
-        if track_uri is None:
+        track_uris = self._build_rfid_track_uris(uid_str)
+        if not track_uris:
             return
 
         try:
             self.core.playback.stop().get()
             self.core.tracklist.clear().get()
-            tl_tracks = self.core.tracklist.add(uris=[track_uri]).get()
-            if not tl_tracks:
+
+            for track_uri in track_uris:
+                tl_tracks = self.core.tracklist.add(uris=[track_uri]).get()
+                if not tl_tracks:
+                    logger.warning(
+                        "mopidy-pidiv2: Mopidy did not add a track for "
+                        f"RFID URI {track_uri}"
+                    )
+                    continue
+
+                self.core.playback.play(tl_track=tl_tracks[0]).get()
                 logger.warning(
-                    f"mopidy-pidiv2: Mopidy did not add a track for RFID URI {track_uri}"
+                    "mopidy-pidiv2: started RFID playback for card "
+                    f"{uid_str} using {track_uri}"
                 )
                 return
-            self.core.playback.play(tl_track=tl_tracks[0]).get()
-            logger.warning(
-                f"mopidy-pidiv2: started RFID playback for card {uid_str} using {track_uri}"
-            )
+
+                logger.warning(
+                    "mopidy-pidiv2: no playable URI was accepted for RFID card "
+                    f"{uid_str}"
+                )
         except Exception as error:
             logger.error(
                 f"mopidy-pidiv2: failed to start RFID playback for card {uid_str}: {error}"
