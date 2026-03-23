@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import struct
 import threading
 import time
 from urllib.parse import quote, unquote, urlparse
@@ -25,6 +26,11 @@ try:
     import psutil
 except ImportError:
     psutil = None
+
+try:
+    import smbus
+except ImportError:
+    smbus = None
 
 import pykka
 from mopidy import core
@@ -65,6 +71,8 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         self._gpio_buttons = []
         self._ups_thread = None
         self._ups_running = threading.Event()
+        self._ups_i2c_bus = None
+        self._ups_i2c_ready = False
 
     def on_start(self):
         self.display = PiDiV2(self.config)
@@ -168,9 +176,15 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         if not cfg.get("ups_enabled", False):
             logger.warning("mopidy-pidiv2: UPS monitor disabled (ups_enabled = false)")
             return
-        if psutil is None:
-            logger.error("mopidy-pidiv2: ups_enabled but psutil is not installed")
+        if psutil is None and smbus is None:
+            logger.error(
+                "mopidy-pidiv2: no UPS backend available (missing psutil and smbus)"
+            )
             return
+        if psutil is None:
+            logger.warning(
+                "mopidy-pidiv2: psutil not installed, trying sysfs/I2C UPS detection"
+            )
         self._ups_running.set()
         self._ups_thread = threading.Thread(
             target=self._ups_loop, name="pidiv2-ups", daemon=True
@@ -183,6 +197,88 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         if self._ups_thread is not None:
             self._ups_thread.join(timeout=5.0)
             self._ups_thread = None
+        if self._ups_i2c_bus is not None:
+            try:
+                self._ups_i2c_bus.close()
+            except Exception:
+                pass
+            self._ups_i2c_bus = None
+            self._ups_i2c_ready = False
+
+    def _read_ups_status_i2c(self):
+        if smbus is None:
+            return None
+
+        addr = 0x62
+        reg_vcell = 0x02
+        reg_soc = 0x04
+        reg_mode = 0x0A
+
+        try:
+            if self._ups_i2c_bus is None:
+                self._ups_i2c_bus = smbus.SMBus(1)
+
+            if not self._ups_i2c_ready:
+                # QuickStart sequence from the known working MAX1704x script.
+                self._ups_i2c_bus.write_byte_data(addr, reg_mode, 0x00)
+                time.sleep(0.5)
+                self._ups_i2c_bus.write_byte_data(addr, reg_mode, 0x30)
+                time.sleep(2)
+                self._ups_i2c_ready = True
+
+            soc_raw = self._ups_i2c_bus.read_word_data(addr, reg_soc)
+            soc_swapped = struct.unpack("<H", struct.pack(">H", soc_raw))[0]
+            percent = soc_swapped / 256.0
+
+            vcell_raw = self._ups_i2c_bus.read_word_data(addr, reg_vcell)
+            vcell_swapped = struct.unpack("<H", struct.pack(">H", vcell_raw))[0]
+            voltage = vcell_swapped * 0.305 / 1000.0
+
+            # This fuel gauge does not provide charger/plug state directly.
+            return percent, None, f"i2c-max1704x {voltage:.2f}V"
+        except Exception as error:
+            logger.error(f"mopidy-pidiv2: i2c UPS read failed: {error}")
+            self._ups_i2c_ready = False
+            return None
+
+    def _read_ups_status(self):
+        if psutil is not None:
+            try:
+                battery = psutil.sensors_battery()
+                if battery is not None and battery.percent is not None:
+                    return float(battery.percent), bool(battery.power_plugged), "psutil"
+            except Exception as error:
+                logger.error(f"mopidy-pidiv2: psutil battery read failed: {error}")
+
+        power_supply_root = "/sys/class/power_supply"
+        if not os.path.isdir(power_supply_root):
+            return None
+
+        for supply_name in sorted(os.listdir(power_supply_root)):
+            supply_path = os.path.join(power_supply_root, supply_name)
+            capacity_path = os.path.join(supply_path, "capacity")
+            status_path = os.path.join(supply_path, "status")
+            if not os.path.isfile(capacity_path):
+                continue
+
+            try:
+                with open(capacity_path, "r", encoding="utf-8") as fobj:
+                    percent = float(fobj.read().strip())
+            except Exception:
+                continue
+
+            plugged = True
+            if os.path.isfile(status_path):
+                try:
+                    with open(status_path, "r", encoding="utf-8") as fobj:
+                        status = fobj.read().strip().lower()
+                    plugged = status in {"charging", "full", "not charging", "unknown"}
+                except Exception:
+                    pass
+
+            return percent, plugged, f"sysfs:{supply_name}"
+
+        return self._read_ups_status_i2c()
 
     def _ups_loop(self):
         cfg = self._pidiv2_config()
@@ -194,31 +290,39 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         )
         while self._ups_running.is_set():
             try:
-                battery = psutil.sensors_battery()
-                logger.warning(f"mopidy-pidiv2: UPS poll: sensors_battery()={battery}")
-                if battery is None:
+                status = self._read_ups_status()
+                if status is None:
                     logger.warning(
                         "mopidy-pidiv2: UPS poll returned None "
-                        "— no battery/UPS detected by psutil"
+                        "- no battery/UPS detected by psutil or sysfs"
                     )
                 else:
-                    plugged = battery.power_plugged
-                    pct = battery.percent
+                    pct, plugged, source = status
+                    power_state = "(unknown power state)"
+                    if plugged is True:
+                        power_state = "(plugged)"
+                    elif plugged is False:
+                        power_state = "(on battery)"
                     logger.warning(
-                        f"mopidy-pidiv2: UPS status: {pct:.0f}% "
-                        f"{'(plugged)' if plugged else '(on battery)'}"
+                        f"mopidy-pidiv2: UPS status ({source}): {pct:.0f}% "
+                        f"{power_state}"
                     )
                     self.display.update_battery(percent=pct, plugged=plugged)
-                    if not plugged and pct <= threshold:
+                    if plugged is False and pct <= threshold:
                         logger.warning(
                             f"mopidy-pidiv2: UPS at {pct:.0f}% "
-                            f"≤ threshold {threshold}% — shutting down"
+                            f"<= threshold {threshold}% - shutting down"
                         )
                         self._do_shutdown()
                         return
             except Exception as error:
                 logger.error(f"mopidy-pidiv2: UPS poll error: {error}")
-            self._ups_running.wait(timeout=poll_interval)
+
+            sleep_left = float(poll_interval)
+            while self._ups_running.is_set() and sleep_left > 0:
+                step = min(1.0, sleep_left)
+                time.sleep(step)
+                sleep_left -= step
 
     def _on_button_volume_down(self):
         self._send("core.mixer.set_volume", volume=max(0, (self._get_volume() or 0) - 5))
@@ -726,7 +830,11 @@ class PiDiV2:
             from PIL import Image, ImageDraw
             img = Image.open(art_path).convert("RGB")
             draw = ImageDraw.Draw(img)
-            icon = "+ " if self._battery_plugged else "- "
+            icon = "? "
+            if self._battery_plugged is True:
+                icon = "+ "
+            elif self._battery_plugged is False:
+                icon = "- "
             text = f"{icon}{self._battery_percent:.0f}%"
             x, y = 6, 6
             # Drop shadow for readability on any art colour
