@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -863,18 +862,16 @@ class PiDiV2:
                 # Embedded cover art from MP3/FLAC ID3 tags via mopidy-local.
                 # Must be checked before os.path.isfile — the URI is too long for the
                 # filesystem and raises OSError on Linux.
-                cache_key = hashlib.md5(art.encode("utf-8")).hexdigest()
-                file_name = os.path.join(self.cache_dir, f"{cache_key}.jpg")
-                if not os.path.isfile(file_name):
-                    logger.warning(f"mopidy-pidiv2: decoding embedded cover art to {file_name}")
-                    try:
-                        _, encoded = art.split(",", 1)
-                        self._brainz.save_album_art(base64.b64decode(encoded), file_name)
-                    except Exception as e:
-                        logger.error(f"mopidy-pidiv2: failed to decode embedded cover art: {e}")
-                        return
-                else:
-                    logger.warning(f"mopidy-pidiv2: embedded cover art cache hit: {file_name}")
+                file_name = os.path.join(self.cache_dir, "current_embedded_art.jpg")
+                logger.warning(
+                    f"mopidy-pidiv2: decoding embedded cover art to {file_name}"
+                )
+                try:
+                    _, encoded = art.split(",", 1)
+                    self._brainz.save_album_art(base64.b64decode(encoded), file_name)
+                except Exception as e:
+                    logger.error(f"mopidy-pidiv2: failed to decode embedded cover art: {e}")
+                    return
                 self._handle_album_art(file_name)
                 return
             else:
