@@ -166,6 +166,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
     def _start_ups_monitor(self):
         cfg = self._pidiv2_config()
         if not cfg.get("ups_enabled", False):
+            logger.warning("mopidy-pidiv2: UPS monitor disabled (ups_enabled = false)")
             return
         if psutil is None:
             logger.error("mopidy-pidiv2: ups_enabled but psutil is not installed")
@@ -175,7 +176,7 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
             target=self._ups_loop, name="pidiv2-ups", daemon=True
         )
         self._ups_thread.start()
-        logger.info("mopidy-pidiv2: UPS monitor started")
+        logger.warning("mopidy-pidiv2: UPS monitor started")
 
     def _stop_ups_monitor(self):
         self._ups_running.clear()
@@ -187,25 +188,36 @@ class PiDiV2Frontend(pykka.ThreadingActor, core.CoreListener):
         cfg = self._pidiv2_config()
         threshold = cfg.get("ups_shutdown_threshold", 10)
         poll_interval = cfg.get("ups_poll_interval", 60)
+        logger.warning(
+            f"mopidy-pidiv2: UPS loop running "
+            f"(threshold={threshold}%, poll={poll_interval}s)"
+        )
         while self._ups_running.is_set():
-            battery = psutil.sensors_battery()
-            if battery is not None:
-                self.display.update_battery(
-                    percent=battery.percent,
-                    plugged=battery.power_plugged,
-                )
-                if not battery.power_plugged:
+            try:
+                battery = psutil.sensors_battery()
+                logger.warning(f"mopidy-pidiv2: UPS poll: sensors_battery()={battery}")
+                if battery is None:
+                    logger.warning(
+                        "mopidy-pidiv2: UPS poll returned None "
+                        "— no battery/UPS detected by psutil"
+                    )
+                else:
+                    plugged = battery.power_plugged
                     pct = battery.percent
                     logger.warning(
-                        f"mopidy-pidiv2: UPS on battery at {pct:.0f}% "
-                        f"(threshold {threshold}%)"
+                        f"mopidy-pidiv2: UPS status: {pct:.0f}% "
+                        f"{'(plugged)' if plugged else '(on battery)'}"
                     )
-                    if pct <= threshold:
+                    self.display.update_battery(percent=pct, plugged=plugged)
+                    if not plugged and pct <= threshold:
                         logger.warning(
-                            "mopidy-pidiv2: UPS below threshold — shutting down"
+                            f"mopidy-pidiv2: UPS at {pct:.0f}% "
+                            f"≤ threshold {threshold}% — shutting down"
                         )
                         self._do_shutdown()
                         return
+            except Exception as error:
+                logger.error(f"mopidy-pidiv2: UPS poll error: {error}")
             self._ups_running.wait(timeout=poll_interval)
 
     def _on_button_volume_down(self):
