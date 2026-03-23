@@ -38,6 +38,9 @@ class Extension(ext.Extension):
         schema["display"] = config.String(choices=self.get_display_types().keys())
         schema["rotation"] = config.Integer(choices=[0, 90, 180, 270])
         schema["idle_timeout"] = config.Integer(minimum=0)
+        schema["rfid_enabled"] = config.Boolean()
+        schema["rfid_poll_interval"] = config.Float(minimum=0)
+        schema["rfid_debounce"] = config.Float(minimum=0)
         return schema
 
     def setup(self, registry):

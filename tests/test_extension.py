@@ -21,6 +21,9 @@ def test_get_config_schema():
     schema = ext.get_config_schema()
 
     assert "display" in schema
+    assert "rfid_enabled" in schema
+    assert "rfid_poll_interval" in schema
+    assert "rfid_debounce" in schema
 
 
 def test_setup():
